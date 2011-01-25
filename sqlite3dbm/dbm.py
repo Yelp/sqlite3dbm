@@ -1,6 +1,19 @@
-"""
-A SQLite-backed dictionary.
-"""
+# Copyright 2011 Yelp
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""A SQLite-backed dictionary that respects the dbm interface"""
+
 from __future__ import with_statement
 
 import os
@@ -113,11 +126,11 @@ class SqliteMap(object):
 
         Args:
             path: Path on disk to db to back this map
-            flag: How to open the db.  Option is one of:
+            flag: How to open the db.
                 c: create if it doesn't exist
                 n: new empty
                 w: open existing
-                r: readonly [default]
+                r: open existing readonly [default]
             mode: Unix mode of underlying file if it is created. Modified by umask.
         """
         # Need an absolute path to db on the filesystem
@@ -158,12 +171,12 @@ class SqliteMap(object):
     def __getitem__(self, k):
         """x.__getitem__(k) <==> x[k]
 
-        This version of getitem also transparently works on lists:
-        >>> smap.update({'1': 'a', '2': 'b', '3': 'c'})
-        >>> smap['1', '2', '3']
-        [u'a', u'b', u'c']
-        >>> smap[['1', '2', '3']]
-        [u'a', u'b', u'c']
+        This version of :meth:`__getitem__` also transparently works on lists:
+            >>> smap.update({'1': 'a', '2': 'b', '3': 'c'})
+            >>> smap['1', '2', '3']
+            [u'a', u'b', u'c']
+            >>> smap[['1', '2', '3']]
+            [u'a', u'b', u'c']
         """
         if hasattr(k, '__iter__'):
             return self.select(k)
@@ -229,7 +242,7 @@ class SqliteMap(object):
             return val
         except KeyError:
             if d is __POP_SENTINEL__:
-                raise KeyError
+                raise KeyError(k)
             else:
                 return d
 
@@ -242,7 +255,9 @@ class SqliteMap(object):
 
         rows = [row for row in self.conn.execute(_GET_ONE_QUERY)]
         if len(rows) != 1:
-            raise KeyError
+            raise KeyError(
+                'Found %d rows when there should have been 1' % (len(rows),)
+            )
 
         key, val = rows[0]
         del self[key]
@@ -260,13 +275,19 @@ class SqliteMap(object):
             return d
 
     def get_many(self, *args, **kwargs):
-        """Basically `get` and `select` combined.
+        """Basically :meth:`~sqlite3dbm.dbm.SqliteMap.get`
+        and :meth:`~sqlite3dbm.dbm.SqliteMap.select` combined.
 
-        Interface is the same as `select` except for the additional kwarg
-        `default` which specifies what value should be used for keys that are
-        not present in the dict.
+        The interface is the same as :meth:`~sqlite3dbm.dbm.SqliteMap.select`
+        except for the additional option argument `default`.  This argument
+        specifies what value should be used for keys that are not present in
+        the dict.
         """
-        default = kwargs.get('default')
+        default = kwargs.pop('default', None)
+        if kwargs:
+            raise TypeError(
+                'Got an unexpected keyword argument: %r' % (kwargs,)
+            )
 
         def k_gen():
             """Generator to make iterating over args easy."""
@@ -304,18 +325,18 @@ class SqliteMap(object):
         return result
 
     def select(self, *args):
-        """List based version of getitem.  Complement of `update`.
+        """List based version of :meth:`__getitem__`.  Complement of :meth:`~sqlite3dbm.dbm.SqliteMap.update`.
 
-        Args are the keys to retrieve from the dict.
-        >>> smap.update({'1': 'a', '2': 'b', '3': 'c'})
-        >>> smap.select('1', '2', '3')
-        [u'a', u'b', u'c']
-        >>> smap.select(['1', '2', '3'])
-        [u'a', u'b', u'c']
-        >>> smap.select(['1', '2'], '3')
-        [u'a', u'b', u'c']
-        >>> smap.select(['1', '2'], ['3'])
-        [u'a', u'b', u'c']
+        `args` are the keys to retrieve from the dict.  All of the following work:
+            >>> smap.update({'1': 'a', '2': 'b', '3': 'c'})
+            >>> smap.select('1', '2', '3')
+            [u'a', u'b', u'c']
+            >>> smap.select(['1', '2', '3'])
+            [u'a', u'b', u'c']
+            >>> smap.select(['1', '2'], '3')
+            [u'a', u'b', u'c']
+            >>> smap.select(['1', '2'], ['3'])
+            [u'a', u'b', u'c']
 
         Returns:
             List of values corresponding to the requested keys in order
@@ -325,7 +346,7 @@ class SqliteMap(object):
         """
         vals = self.get_many(default=__MISSING_SENTINEL__, *args)
         if __MISSING_SENTINEL__ in vals:
-            raise KeyError
+            raise KeyError('One of the requested keys is missing!')
         return vals
 
     def update(self, *args, **kwargs):

@@ -1,0 +1,7 @@
+sqlite3dbm 0.x:
+===============
+Primary authors:
+
+* Jason Fennell <jfennell@yelp.com>
+
+Contributors (in order of contribution, latest first):
