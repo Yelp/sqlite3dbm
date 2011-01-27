@@ -19,7 +19,7 @@ setuptools.setup(
     ],
     description='sqlite-backed dictionary',
     license='Apache',
-    long_description=open('README.txt').read(),
+    long_description=open('README.md').read(),
     name='sqlite3dbm',
     packages=['sqlite3dbm'],
     provides=['sqlite3dbm'],

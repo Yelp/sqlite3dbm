@@ -16,5 +16,12 @@
 interface, along with a shelve class that wraps the dict and provides
 serialization for it.
 """
+
 __author__ = 'Jason Fennell <jfennell@yelp.com>'
-__version__ = '0.1.0'
+__version__ = '0.1.1'
+
+import sqlite3dbm.dbm as dbm
+import sqlite3dbm.sshelve as sshelve
+
+# Expose `open` and `error` here
+from sqlite3dbm.dbm import *

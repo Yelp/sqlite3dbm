@@ -12,7 +12,87 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A SQLite-backed dictionary that respects the dbm interface"""
+"""A SQLite-backed dictionary that respects the dbm interface.
+
+This module is quite similar to the `dbm` module, but uses `sqlite3` instead
+for a backend store.  It also provides a small extension to the traditional
+dictionary interface.
+
+Extended Interface:
+ * __getitem__: Like normal __getitem__ but also works on lists.
+ * select: List-based version of __getitem__.  Complement of update()
+ * get_many: get() and select() combined.
+
+For additional docs, see the help()/pydoc for
+sqlite3dbm.dbm.SqliteMap.<method-name>, ie. sqlite3dbm.dbm.SqliteMap.select
+
+Usage Example:
+>>> import sqlite3dbm
+>>> db = sqlite3dbm.open('mydb.sqlite3', flag='c')
+>>>
+>>> # Print doesn't work, you need to do .items()
+>>> db
+<sqlite3dbm.dbm.SqliteMap object at 0x7f0d6ecac4d0>
+>>> db.items()
+[]
+>>>
+>>> # Acts like a regular dict, but only for bytestrings
+>>> db['foo'] = 'bar'
+>>> db['foo']
+'bar'
+>>> db.items()
+[('foo', 'bar')]
+>>> del db['foo']
+>>> db.items()
+[]
+>>>
+>>> # Some extentions that allow for batch reads
+>>> db.update({'foo': 'one', 'bar': 'two', 'baz': 'three'})
+>>> db['foo', 'bar']
+['one', 'two']
+>>> db.select('foo', 'bar')
+['one', 'two']
+>>> db.select('foo', 'bar', 'qux')
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "./sqlite3dbm/dbm.py", line 343, in select
+    raise KeyError('One of the requested keys is missing!')
+KeyError: 'One of the requested keys is missing!'
+>>> db.get_many('foo', 'bar', 'qux')
+['one', 'two', None]
+>>> db.get_many('foo', 'bar', 'qux', default='')
+['one', 'two', '']
+>>>
+>>> # Persistent!
+>>> db.items()
+[('baz', 'three'), ('foo', 'one'), ('bar', 'two')]
+>>> del db
+>>> reopened_db = sqlite3dbm.open('mydb.sqlite3')
+>>> reopened_db.items()
+[('baz', 'three'), ('foo', 'one'), ('bar', 'two')]
+>>>
+>>> # Be aware that the default flag is 'r'
+>>> reopened_db['qux'] = 'four'
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "./sqlite3dbm/dbm.py", line 164, in __setitem__
+    raise error('DB is readonly')
+sqlite3dbm.dbm.SqliteMapException: DB is readonly
+>>> writeable_db = sqlite3dbm.open('mydb.sqlite3', flag='w') # 'c' would be fine too
+>>> writeable_db['qux'] = 'four'
+>>> reopened_db.items()
+[('baz', 'three'), ('foo', 'one'), ('bar', 'two'), ('qux', 'four')]
+>>> writeable_db.items()
+[('baz', 'three'), ('foo', 'one'), ('bar', 'two'), ('qux', 'four')]
+>>>
+>>> # Catching sqlite3dbm-specific errors
+>>> try:
+...   reopened_db['foo'] = 'blargh'
+... except sqlite3dbm.error:
+...   print 'Caught a module-specific error'
+...
+Caught a module-specific error
+"""
 
 from __future__ import with_statement
 
@@ -89,25 +169,12 @@ _CREATE_TABLE = (
     'kv_table (key TEXT PRIMARY KEY, val TEXT)'
 )
 
-def _to_unicode(s):
-    """Convert raw strings to unicode.
-
-    First try to decode from utf-8, then fallback
-    to windows-1252 then latin-1.
-    """
-    # We only change bytestrings
-    if not isinstance(s, str):
-        return s
-
-    try:
-        return s.decode('utf-8')
-    except UnicodeDecodeError:
-        try:
-            return s.decode('windows-1252')
-        except UnicodeDecodeError:
-            return s.decode('latin-1')
-
 class SqliteMapException(Exception):
+    """Raised on module-specific errors, such as protection errors.
+
+    KeyError is raised for general mapping errors like specifying an incorrect
+    key.
+    """
     pass
 # DBM interface
 error = SqliteMapException
@@ -124,14 +191,7 @@ class SqliteMap(object):
     def __init__(self, path, flag='r', mode=0666):
         """Create an dict backed by a SQLite DB at `sqlite_db_path`.
 
-        Args:
-            path: Path on disk to db to back this map
-            flag: How to open the db.
-                c: create if it doesn't exist
-                n: new empty
-                w: open existing
-                r: open existing readonly [default]
-            mode: Unix mode of underlying file if it is created. Modified by umask.
+        See `open` for explanation of the parameters.
         """
         # Need an absolute path to db on the filesystem
         path = os.path.abspath(path)
@@ -154,6 +214,7 @@ class SqliteMap(object):
                 os.open(path, os.O_CREAT, mode)
 
         self.conn = sqlite3.connect(path)
+        self.conn.text_factory = str
         self.conn.execute(_CREATE_TABLE)
 
         # n option requires us to clear out existing data
@@ -305,11 +366,7 @@ class SqliteMap(object):
 
             # Need to do this whole map lookup thing because the
             # select does not have a return order
-            #
-            # Need to convert keys to unicode because Sqlite does that
-            # automatically, but builtin dicts distinguish unicode
-            # and non-unicode keys
-            return (key_to_val.get(_to_unicode(key), default) for key in keys)
+            return (key_to_val.get(key, default) for key in keys)
 
         keys = []
         result = []
@@ -406,4 +463,18 @@ class SqliteMap(object):
         return self.iterkeys()
 
 def open(filename, flag='r', mode=0666):
+    """Open a database and return a SqliteMap object.
+
+    The `filename` argument is the path to the database file.
+
+    The optional `flag` argument can be:
+        r: Open existing db for reading only [default]
+        w: Open existing db read/write
+        c: Open db read/write, creating if it doesn't exist
+        n: Open new and emtpy db read/write
+
+    The optional `mode` argument is the Unix mode of the file, used only when
+    the database has to be created.  It defaults to octal 0666 and respects the
+    prevailing umask.
+    """
     return SqliteMap(filename, flag=flag, mode=mode)

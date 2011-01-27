@@ -335,29 +335,6 @@ class TestSqliteMapInterface(SqliteMapTestCase):
 class TestSqliteRegressions(SqliteMapTestCase):
     """A place for regression tests"""
 
-    def test_get_many_unicode_keys(self):
-        """sqlite3 transparently converts strings to unicode when they come
-        out.  However the unicode and raw strings corresponding to the same
-        characters are different objects, and hash to different dictionary
-        keys.  Thus, when we use a dictionary with raw string keys and try to
-        look up the unicode values that came out of sqlite3 we were having
-        problems!.
-        """
-        k = u'café'.encode('utf-8')
-        v = u'bläserforum'
-        self.smap[k] = v
-
-        msg = (
-            'Failed to update & get_many '
-            'unicode expected: d[%s]->%s, saw: ->%s'
-        )
-        msg % ([k], [v], self.smap.get_many([k]))
-        testify.assert_equal(
-            self.smap.get_many([k]),
-            [v],
-            message=msg
-        )
-
     def test_huge_selects(self):
         """There is a 1000-variable limit when binding variables in sqlite
         statements.  Make sure we can do selects bigger than this

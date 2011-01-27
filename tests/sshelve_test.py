@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Copyright 2011 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,15 +21,14 @@ import tempfile
 
 import testify
 
-import sqlite3dbm.dbm
-import sqlite3dbm.sshelve
+import sqlite3dbm
 
 class TestSqliteShelf(testify.TestCase):
     @testify.setup
     def create_shelf(self):
         self.tmpdir = tempfile.mkdtemp()
         self.path = os.path.join(self.tmpdir, 'sqlite_map_test_db.sqlite')
-        self.smap = sqlite3dbm.dbm.open(self.path, flag='c')
+        self.smap = sqlite3dbm.open(self.path, flag='c')
         self.smap_shelf = sqlite3dbm.sshelve.SqliteMapShelf(self.smap)
 
     @testify.teardown
@@ -85,6 +85,16 @@ class TestSqliteShelf(testify.TestCase):
             self.smap_shelf.get_many('jason', 'droid', 'brandon', default=0),
             ['fennell', droid, 0]
         )
+
+    def test_preserves_unicode(self):
+        """Be paranoid about unicode."""
+        k = u'café'.encode('utf-8')
+        v = u'bläserforum'
+        self.smap_shelf[k] = v
+
+        testify.assert_equal(self.smap_shelf[k], v)
+        testify.assert_equal(self.smap_shelf.get_many([k]), [v])
+
 
 class TestShelfOpen(testify.TestCase):
     @testify.setup

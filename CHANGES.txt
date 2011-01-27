@@ -1,3 +1,12 @@
+### v0.1.1, 2011-01-27 -- Final API fixes, Beefing up docs
+* Only support bytestring k/v in sqlite3dbm for consistency with dbm
+* Make __init__.py better so 'import sqlite3dbm' in the only import needed
+* Improve docs:
+  * Usage examples
+  * Make README markdown
+  * Better description on the root page
+* Version .gitignore
+
 ### v0.1.0, 2011-01-24 -- Initial release
 * sqlite3-backed dictionary conforming to dbm interface
 * shelve subclass to provide serialization for the sqlite3 dbm
