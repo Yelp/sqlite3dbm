@@ -1,3 +1,6 @@
+### v0.1.1a, 2011-01-28 -- Fix MANIFEST
+* Fix the MANIFEST.in to include markdown files
+
 ### v0.1.1, 2011-01-27 -- Final API fixes, Beefing up docs
 * Only support bytestring k/v in sqlite3dbm for consistency with dbm
 * Make __init__.py better so 'import sqlite3dbm' in the only import needed
