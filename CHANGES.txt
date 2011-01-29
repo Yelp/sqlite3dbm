@@ -1,3 +1,6 @@
+### v0.1.2, 2011-01-28 -- Bumb version number
+* Do a full minor bump for pypi
+
 ### v0.1.1a, 2011-01-28 -- Fix MANIFEST
 * Fix the MANIFEST.in to include markdown files
 

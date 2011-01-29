@@ -18,7 +18,7 @@ serialization for it.
 """
 
 __author__ = 'Jason Fennell <jfennell@yelp.com>'
-__version__ = '0.1.1a'
+__version__ = '0.1.2'
 
 import sqlite3dbm.dbm as dbm
 import sqlite3dbm.sshelve as sshelve
