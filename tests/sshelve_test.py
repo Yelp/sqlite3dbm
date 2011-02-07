@@ -18,6 +18,7 @@
 import os
 import shutil
 import tempfile
+import time
 
 import testify
 
@@ -86,6 +87,34 @@ class TestSqliteShelf(testify.TestCase):
             ['fennell', droid, 0]
         )
 
+    def test_update(self):
+        droid = ['R2-D2', 'C-3P0']
+        self.smap_shelf.update({
+            'jason': 'fennell',
+            'droid': droid,
+            'pi': 3.14
+        })
+
+        testify.assert_equal(self.smap_shelf['jason'], 'fennell')
+        testify.assert_equal(self.smap_shelf['droid'], droid)
+        testify.assert_equal(self.smap_shelf['pi'], 3.14)
+
+    def test_clear(self):
+        droid = ['R2-D2', 'C-3P0']
+        self.smap_shelf.update({
+            'jason': 'fennell',
+            'droid': droid,
+            'pi': 3.14
+        })
+
+        testify.assert_equal(self.smap_shelf['jason'], 'fennell')
+        testify.assert_equal(len(self.smap_shelf), 3)
+
+        self.smap_shelf.clear()
+
+        testify.assert_equal(len(self.smap_shelf), 0)
+        testify.assert_not_in('jason', self.smap_shelf)
+
     def test_preserves_unicode(self):
         """Be paranoid about unicode."""
         k = u'café'.encode('utf-8')
@@ -110,6 +139,60 @@ class TestShelfOpen(testify.TestCase):
         smap_shelf = sqlite3dbm.sshelve.open(self.path)
         smap_shelf['foo'] = ['bar', 'baz', 'qux']
         testify.assert_equal(smap_shelf['foo'], ['bar', 'baz', 'qux'])
+
+
+class TestShelfPerf(testify.TestCase):
+    @testify.setup
+    def create_environ(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    @testify.teardown
+    def teardown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def test_update_perf(self):
+        """update() should be faster than lots of individual inserts"""
+
+        # Knobs that control how long this test takes vs. how accurate it is
+        # This test *should not flake*, but if you run into problems then you
+        # should increase `insert_per_iter` (the test will take longer though)
+        num_iters = 5
+        insert_per_iter = 300
+        min_ratio = 10
+
+        # Setup dbs
+        def setup_dbs(name):
+            name = name + '%d'
+            db_paths = [
+                os.path.join(self.tmpdir, name % i)
+                for i in xrange(num_iters)
+            ]
+            return [sqlite3dbm.sshelve.open(path) for path in db_paths]
+        update_dbs = setup_dbs('update')
+        insert_dbs = setup_dbs('insert')
+
+        # Setup data
+        insert_data = [
+            ('foo%d' % i, 'bar%d' % i)
+            for i in xrange(insert_per_iter)
+        ]
+
+        # Time upates
+        update_start = time.time()
+        for update_db in update_dbs:
+            update_db.update(insert_data)
+        update_time = time.time() - update_start
+
+        # Time inserts
+        insert_start = time.time()
+        for insert_db in insert_dbs:
+            for k, v in insert_data:
+                insert_db[k] = v
+        insert_time = time.time() - insert_start
+
+        # Inserts should take a subsantially greater amount of time
+        testify.assert_gt(insert_time, min_ratio*update_time)
+
 
 if __name__ == '__main__':
     testify.run()

@@ -77,6 +77,35 @@ class SqliteMapShelf(shelve.Shelf):
             for v in self.dict.select(*args)
         ]
 
+    # Performance override: we want to batch writes into one transaction
+    def update(self, *args, **kwargs):
+        # Copied from sqlite3dbm.dbm
+        def kv_gen():
+            """Generator that combines all the args for easy iteration."""
+            for arg in args:
+                if isinstance(arg, dict):
+                    for k, v in arg.iteritems():
+                        yield k, v
+                else:
+                    for k, v in arg:
+                        yield k, v
+
+            for k, v in kwargs.iteritems():
+                yield k, v
+        inserts = list(kv_gen())
+
+        if self.writeback:
+            self.cache.update(inserts)
+
+        self.dict.update([
+            (k, dumps(v, protocol=self._protocol))
+            for k, v in inserts
+        ])
+
+    # Performance override: clear in one sqlite command
+    def clear(self):
+        self.dict.clear()
+
 def open(filename, flag='c', mode=0666, protocol=None, writeback=False):
     """Open a persistent sqlite3-backed dictionary.  The *filename* specificed
     is the path to the underlying database.

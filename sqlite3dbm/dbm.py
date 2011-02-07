@@ -425,7 +425,7 @@ class SqliteMap(object):
 
             for k, v in kwargs.iteritems():
                 yield k, v
-        rows = [(k, v) for k, v in kv_gen()]
+        rows = list(kv_gen())
 
         # Do all the inserts in a single transaction for the sake of efficiency
         # TODO: Compare preformance of INSERT MANY to many INSERTS.  Will
