@@ -115,6 +115,12 @@ __POP_SENTINEL__ = ('__pop__',)
 # values in `select`
 __MISSING_SENTINEL__ = ('__missing__',)
 
+def _utf8(s):
+    """Guarantee that the return value is a utf-8 encoded string."""
+    if isinstance(s, unicode):
+        return s.encode('utf-8')
+    assert isinstance(s, str)
+    return s
 
 ## Pre-compile all queries as raw SQL for speed and
 ## to avoid outside dependencies
@@ -365,8 +371,11 @@ class SqliteMap(object):
             key_to_val = dict(self.conn.execute(get_many_query(len(keys)), keys))
 
             # Need to do this whole map lookup thing because the
-            # select does not have a return order
-            return (key_to_val.get(key, default) for key in keys)
+            # select does not have a return order.
+            #
+            # We force the keys to be utf8 because that is what sqlite3
+            # gives us back from the cursor.
+            return (key_to_val.get(_utf8(key), default) for key in keys)
 
         keys = []
         result = []

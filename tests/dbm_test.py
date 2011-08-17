@@ -353,6 +353,16 @@ class TestSqliteRegressions(SqliteMapTestCase):
                 message='Select failed on %d elements' % size
             )
 
+    def test_get_many_unicode_keys(self):
+        """Make sure get_many works correctly with unicode keys."""
+        k = u'\u6d77\u5bf6\u9ede\u5fc3\u7f8e\u98df\u574a'
+        v = 'hello'
+        self.smap[k] = v
+
+        testify.assert_equal(self.smap[k], v)
+        testify.assert_equal(self.smap.get(k), v)
+        testify.assert_equal(self.smap.get_many([k]), [v])
+
 
 class TestSqliteStorage(SqliteMapTestCase):
     """Tests things like key capacity and persistence to disk"""
