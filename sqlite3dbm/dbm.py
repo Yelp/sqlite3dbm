@@ -199,8 +199,6 @@ class SqliteMap(object):
 
         See `open` for explanation of the parameters.
         """
-        # Need an absolute path to db on the filesystem
-        path = os.path.abspath(path)
 
         if flag not in ('c', 'n', 'w', 'r'):
             raise error('Invalid flag "%s"' % (flag,))
@@ -210,14 +208,19 @@ class SqliteMap(object):
 
         self.readonly = flag == 'r'
 
-        # r and w require the db to exist ahead of time
-        if not os.path.exists(path):
-            if flag in ('r', 'w'):
-                raise error('DB does not exist at %s' % (path,))
-            else:
-                # Ghetto way of respecting mode, since unexposed by sqlite3.connect
-                # Manually create the file before sqlite3 connects to it
-                os.open(path, os.O_CREAT, mode)
+        # Allow for :memory: sqlite3 path for testing purposes
+        if path != ':memory:':
+            # Need an absolute path to db on the filesystem
+            path = os.path.abspath(path)
+
+            # r and w require the db to exist ahead of time
+            if not os.path.exists(path):
+                if flag in ('r', 'w'):
+                    raise error('DB does not exist at %s' % (path,))
+                else:
+                    # Ghetto way of respecting mode, since unexposed by sqlite3.connect
+                    # Manually create the file before sqlite3 connects to it
+                    os.open(path, os.O_CREAT, mode)
 
         self.conn = sqlite3.connect(path)
         self.conn.text_factory = str

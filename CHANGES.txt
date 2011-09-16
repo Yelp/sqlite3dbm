@@ -1,3 +1,6 @@
+### v0.1.4-memory, 2011-09-16 -- Bugfix sqlite3 :memory: path
+* Allow for :memory: sqlite3 path for testing purposes
+
 ### v0.1.4, 2011-08-17 -- Bugfix for get_many unicode issue
 * get_many() and select() no longer miss unicode keys
 
