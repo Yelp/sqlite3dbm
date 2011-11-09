@@ -401,6 +401,35 @@ class TestSqliteStorage(SqliteMapTestCase):
         testify.assert_equal(smap['foo'], 'a')
 
 
+class TestSqliteMemoryStorage(testify.TestCase):
+    """Test that storage for in-memory databases works as expected."""
+
+    def test_multiple_in_memory_maps(self):
+        # In-memory maps should not share state
+        smap1 = sqlite3dbm.dbm.SqliteMap(':memory:', flag='w')
+        smap2 = sqlite3dbm.dbm.SqliteMap(':memory:', flag='w')
+
+        # Write to just the first map
+        smap1['foo'] = 'a'
+        testify.assert_equal(smap1['foo'], 'a')
+        testify.assert_not_in('foo', smap2)
+
+        # Write to just the second map
+        smap2['bar'] = 'b'
+        testify.assert_not_in('bar', smap1)
+        testify.assert_equal(smap2['bar'], 'b')
+
+    def test_not_persistent_through_reopen(self):
+        smap = sqlite3dbm.dbm.SqliteMap(':memory:', flag='w')
+        smap['foo'] = 'a'
+        testify.assert_equal(smap['foo'], 'a')
+
+        # We shuld have an empty map after closing & opening a new onw
+        del smap
+        smap = sqlite3dbm.dbm.SqliteMap(':memory:', flag='w')
+        testify.assert_equal(smap.items(), [])
+
+
 class SqliteCreationTest(testify.TestCase):
     """Base class for tests checking creation of SqliteMap backend stores"""
     @testify.setup
