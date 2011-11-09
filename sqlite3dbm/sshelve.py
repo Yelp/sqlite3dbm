@@ -56,7 +56,7 @@ class SqliteMapShelf(shelve.Shelf):
     def __init__(self, smap, protocol=None, writeback=False):
         # Force the Sqlite DB to return bytestrings.  By default it returns
         # unicode by default, which causes Pickle to shit its pants.
-        smap.conn.text_factory = str
+        smap._conn.text_factory = str
 
         # SqliteMapShelf < Shelf < DictMixin which is an old style class :-P
         shelve.Shelf.__init__(self, smap, protocol, writeback)
