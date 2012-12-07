@@ -98,6 +98,7 @@ from __future__ import with_statement
 
 import os
 import time
+import functools
 import sqlite3
 
 __all__ = [
@@ -183,6 +184,7 @@ error = SqliteMapException
 ATTEMPTS_COUNT = float("inf")
 
 def lockwait(f):
+    @functools.wraps(f)
     def _lockwait(*args, **kwargs):
         attempt = ATTEMPTS_COUNT
         r = None
@@ -191,11 +193,10 @@ def lockwait(f):
             try:
                 r = f(*args, **kwargs)
             except sqlite3.OperationalError, e:
-                if e.message != "database is locked":
+                if e.message != "database is locked" or \
+                   attempt == -1: # -1 is last attempt
                     raise
                 else:
-                    if attempt == -1: # last attempt
-                        raise
                     time.sleep(0.01)
             else:
                 break
