@@ -124,6 +124,7 @@ __MISSING_SENTINEL__ = ('__missing__',)
 _GET_QUERY = 'SELECT kv_table.val FROM kv_table WHERE kv_table.key = ?'
 _GET_ALL_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table'
 _GET_ONE_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table LIMIT 1 OFFSET 0'
+_GET_LAST_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table ORDER BY kv_table.key desc LIMIT 1 OFFSET 0'
 
 # The get-many query generation is slightly unfortunate in that sqlite does not
 # seem to have an interface for binding a list of values into a query.  Thus,
@@ -353,6 +354,22 @@ class SqliteMap(object):
         del self[key]
         return key, val
 
+    def getlast(self):
+        """D.getlast() -> (k, v), return last by key (key, value) pair as a
+        2-tuple; but raise KeyError if D is empty
+        """
+        if self.readonly:
+            raise error('DB is readonly')
+
+        rows = [row for row in self.conn.execute(_GET_LAST_QUERY)]
+        if len(rows) != 1:
+            raise KeyError(
+                'Found %d rows when there should have been 1' % (len(rows),)
+            )
+
+        key, val = rows[0]
+        return key, val
+
     def setdefault(self, k, d=None):
         """D.setdefault(k[,d]) -> D.get(k,d), also set D[k]=d if k not in D"""
         if self.readonly:
@@ -464,10 +481,12 @@ class SqliteMap(object):
         self.conn.executemany(_SET_QUERY, rows)
         self.conn.commit()
 
+    @lockwait
     def __len__(self):
         """x.__len__() <==> len(x)"""
         return self.conn.execute(_COUNT_QUERY).fetchone()[0]
 
+    @lockwait
     ## Iteration
     def iteritems(self):
         """D.iteritems() -> an iterator over the (key, value) items of D"""

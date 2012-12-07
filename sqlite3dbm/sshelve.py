@@ -106,6 +106,9 @@ class SqliteMapShelf(shelve.Shelf):
     def clear(self):
         self.dict.clear()
 
+    def getlast(self):
+        return loads(self.dict.getlast()[1])
+
 def open(filename, flag='c', mode=0666, protocol=None, writeback=False):
     """Open a persistent sqlite3-backed dictionary.  The *filename* specificed
     is the path to the underlying database.
