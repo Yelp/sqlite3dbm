@@ -124,7 +124,7 @@ __MISSING_SENTINEL__ = ('__missing__',)
 _GET_QUERY = 'SELECT kv_table.val FROM kv_table WHERE kv_table.key = ?'
 _GET_ALL_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table'
 _GET_ONE_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table LIMIT 1 OFFSET 0'
-_GET_LAST_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table ORDER BY kv_table.key desc LIMIT 1 OFFSET 0'
+_GET_LAST_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table ORDER BY CAST(kv_table.key AS INT) desc LIMIT %d OFFSET 0'
 
 # The get-many query generation is slightly unfortunate in that sqlite does not
 # seem to have an interface for binding a list of values into a query.  Thus,
@@ -354,21 +354,21 @@ class SqliteMap(object):
         del self[key]
         return key, val
 
-    def getlast(self):
+    @lockwait
+    def getlast(self, count=1):
         """D.getlast() -> (k, v), return last by key (key, value) pair as a
         2-tuple; but raise KeyError if D is empty
         """
         if self.readonly:
             raise error('DB is readonly')
 
-        rows = [row for row in self.conn.execute(_GET_LAST_QUERY)]
-        if len(rows) != 1:
+        rows = [row for row in self.conn.execute(_GET_LAST_QUERY % count)]
+        if len(rows) == 0:
             raise KeyError(
-                'Found %d rows when there should have been 1' % (len(rows),)
+                'Found %d rows' % (len(rows),)
             )
 
-        key, val = rows[0]
-        return key, val
+        return rows
 
     def setdefault(self, k, d=None):
         """D.setdefault(k[,d]) -> D.get(k,d), also set D[k]=d if k not in D"""
