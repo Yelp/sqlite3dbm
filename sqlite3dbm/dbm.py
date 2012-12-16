@@ -122,59 +122,6 @@ def _utf8(s):
     assert isinstance(s, str)
     return s
 
-## Pre-compile all queries as raw SQL for speed and
-## to avoid outside dependencies
-
-_GET_QUERY = 'SELECT kv_table.val FROM kv_table WHERE kv_table.key = ?'
-_GET_ALL_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table'
-_GET_ONE_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table LIMIT 1 OFFSET 0'
-
-# The get-many query generation is slightly unfortunate in that sqlite does not
-# seem to have an interface for binding a list of values into a query.  Thus,
-# we must generate a query string with the right number of missing parameter
-# values for the particular select we want to do
-_GET_MANY_QUERY_TEMPLATE = (
-    'SELECT kv_table.key, kv_table.val FROM kv_table '
-    'WHERE kv_table.key IN (%s)'
-)
-def get_many_query(num_keys):
-    # Cache the super-big query, as it may happen many times
-    # through big select/get_many calls
-    if (num_keys == SQLITE_MAX_QUERY_VARS and
-        hasattr(get_many_query, '_big_query_cache')):
-        return get_many_query._big_query_cache
-
-    interpolation_params = ','.join('?' * num_keys)
-    tmpl = _GET_MANY_QUERY_TEMPLATE % interpolation_params
-
-    if num_keys == SQLITE_MAX_QUERY_VARS:
-        get_many_query._big_query_cache = tmpl
-
-    return tmpl
-
-# Do INSERT OR REPLACE instead of a vanilla INSERT
-# to mimic normal dict overwrite-on-insert behavior
-_SET_QUERY = 'INSERT OR REPLACE INTO kv_table (key, val) VALUES (?, ?)'
-
-_DEL_QUERY = 'DELETE FROM kv_table WHERE kv_table.key = ?'
-_CLEAR_QUERY = 'DELETE FROM kv_table; VACUUM;'
-
-_COUNT_QUERY = 'SELECT COUNT(*) FROM kv_table'
-
-# Table has a String key, which puts an upper bound on the
-# size of keys that can be inserted.  The Text format of
-# the values should be fine in general, but could be optimized
-# if we were storing ints/floats.  Also, should probably
-# be changed to Blob if we use a binary serialization format.
-#
-# TODO: Make this more configurable re the above comment
-# Use TEXT for the keys now... maybe want to limit it for better
-# indexing?  Should do some performance profiling...
-_CREATE_TABLE = (
-    'CREATE TABLE IF NOT EXISTS '
-    'kv_table (key TEXT PRIMARY KEY, val TEXT)'
-)
-
 class SqliteMapException(Exception):
     """Raised on module-specific errors, such as protection errors.
 
@@ -185,58 +132,86 @@ class SqliteMapException(Exception):
 # DBM interface
 error = SqliteMapException
 
-
 class SqliteMap(object):
-    """Dictionary interface backed by a SQLite DB.
+    """Dictionary interface backed by a SQLite Table.
 
     This dictionary only accepts string key/values.
 
     This is not remotely threadsafe.
     """
+    def __init__(self, sqlite_conn, table_name, readonly=False, clear=False):
+        self._readonly = readonly
+        self._precompile_queries(table_name)
 
-    def __init__(self, path, flag='r', mode=0666):
-        """Create an dict backed by a SQLite DB at `sqlite_db_path`.
+        self._conn = sqlite_conn
+        self._conn.execute(self._CREATE_TABLE)
 
-        See `open` for explanation of the parameters.
-        """
-
-        if flag not in ('c', 'n', 'w', 'r'):
-            raise error('Invalid flag "%s"' % (flag,))
-
-        # Default behavior is to create if the file does not already exist.
-        # We tweak from this default behavior to accommodate the other flag options
-
-        self.readonly = flag == 'r'
-
-        # Allow for :memory: sqlite3 path for testing purposes
-        if path != ':memory:':
-            # Need an absolute path to db on the filesystem
-            path = os.path.abspath(path)
-
-            # r and w require the db to exist ahead of time
-            if not os.path.exists(path):
-                if flag in ('r', 'w'):
-                    raise error('DB does not exist at %s' % (path,))
-                else:
-                    # Ghetto way of respecting mode, since unexposed by sqlite3.connect
-                    # Manually create the file before sqlite3 connects to it
-                    os.open(path, os.O_CREAT, mode)
-
-        self.conn = sqlite3.connect(path)
-        self.conn.text_factory = str
-        self.conn.execute(_CREATE_TABLE)
-
-        # n option requires us to clear out existing data
-        if flag == 'n':
+        if clear:
             self.clear()
+
+    def _precompile_queries(self, table_name):
+        ## Pre-compile all queries as raw SQL for speed and
+        ## to avoid outside dependencies
+        table_substitution = dict(table=table_name)
+
+        self._GET_QUERY = 'SELECT %(table)s.val FROM %(table)s WHERE %(table)s.key = ?' % table_substitution
+        self._GET_ALL_QUERY = 'SELECT %(table)s.key, %(table)s.val FROM %(table)s' % table_substitution
+        self._GET_ONE_QUERY = 'SELECT %(table)s.key, %(table)s.val FROM %(table)s LIMIT 1 OFFSET 0' % table_substitution
+
+        # The get-many query generation is slightly unfortunate in that sqlite does not
+        # seem to have an interface for binding a list of values into a query.  Thus,
+        # we must generate a query string with the right number of missing parameter
+        # values for the particular select we want to do
+        self._GET_MANY_QUERY_TEMPLATE = (
+            'SELECT %(table)s.key, %(table)s.val FROM %(table)s WHERE %(table)s.key IN (%%s)' % table_substitution
+        )
+
+        # Do INSERT OR REPLACE instead of a vanilla INSERT
+        # to mimic normal dict overwrite-on-insert behavior
+        self._SET_QUERY = 'INSERT OR REPLACE INTO %(table)s (key, val) VALUES (?, ?)' % table_substitution
+
+        self._DEL_QUERY = 'DELETE FROM %(table)s WHERE %(table)s.key = ?' % table_substitution
+        self._CLEAR_QUERY = 'DELETE FROM %(table)s; VACUUM;' % table_substitution
+
+        self._COUNT_QUERY = 'SELECT COUNT(*) FROM %(table)s' % table_substitution
+
+        # Table has a String key, which puts an upper bound on the
+        # size of keys that can be inserted.  The Text format of
+        # the values should be fine in general, but could be optimized
+        # if we were storing ints/floats.  Also, should probably
+        # be changed to Blob if we use a binary serialization format.
+        #
+        # TODO: Make this more configurable re the above comment
+        # Use TEXT for the keys now... maybe want to limit it for better
+        # indexing?  Should do some performance profiling...
+        self._CREATE_TABLE = (
+            'CREATE TABLE IF NOT EXISTS %(table)s (key TEXT PRIMARY KEY, val TEXT)' % table_substitution
+        )
+
+    def _get_many_query(self, num_keys):
+            # Cache the super-big query, as it may happen many times
+            # through big select/get_many calls
+            if num_keys == SQLITE_MAX_QUERY_VARS and hasattr(self, '_get_many_query_big_query_cache'):
+                return self._get_many_query_big_query_cache
+
+            interpolation_params = ','.join('?' * num_keys)
+            tmpl = self._GET_MANY_QUERY_TEMPLATE % interpolation_params
+
+            if num_keys == SQLITE_MAX_QUERY_VARS:
+                self._get_many_query_big_query_cache = tmpl
+
+            return tmpl
+
+    def _check_readonly(self):
+        if self._readonly:
+            raise error('Table is readonly')
 
     def __setitem__(self, k, v):
         """x.__setitem__(k, v) <==> x[k] = v"""
-        if self.readonly:
-            raise error('DB is readonly')
+        self._check_readonly()
 
-        self.conn.execute(_SET_QUERY, (k, v))
-        self.conn.commit()
+        self._conn.execute(self._SET_QUERY, (k, v))
+        self._conn.commit()
 
     def __getitem__(self, k):
         """x.__getitem__(k) <==> x[k]
@@ -251,25 +226,25 @@ class SqliteMap(object):
         if hasattr(k, '__iter__'):
             return self.select(k)
 
-        row = self.conn.execute(_GET_QUERY, (k,)).fetchone()
+        row = self._conn.execute(self._GET_QUERY, (k,)).fetchone()
         if row is None:
             raise KeyError(k)
         return row[0]
 
     def __delitem__(self, k):
         """x.__delitem__(k) <==> del x[k]"""
-        if self.readonly:
-            raise error('DB is readonly')
+        self._check_readonly()
 
         # So, the delete actually has no problem running when
         # the key k was not present in the map.  Unfortunately,
         # this does not conform to the dict interface so we
         # do a __getitem__ here to make sure a KeyError gets
         # thrown when it should. I think this is dumb :-P
-        self[k]
+        if k not in self:
+            raise KeyError
 
-        self.conn.execute(_DEL_QUERY, (k,))
-        self.conn.commit()
+        self._conn.execute(self._DEL_QUERY, (k,))
+        self._conn.commit()
 
     def __contains__(self, k):
         """D.__contains__(k) -> True if D has a key k, else False"""
@@ -282,11 +257,10 @@ class SqliteMap(object):
 
     def clear(self):
         """D.clear() -> None. Remove all items from D."""
-        if self.readonly:
-            raise error('DB is readonly')
+        self._check_readonly()
 
-        self.conn.executescript(_CLEAR_QUERY)
-        self.conn.commit()
+        self._conn.executescript(self._CLEAR_QUERY)
+        self._conn.commit()
 
     def get(self, k, d=None):
         """D.get(k[,d]) -> D[k] if k in D, else d. d defaults to None."""
@@ -303,8 +277,7 @@ class SqliteMap(object):
         """D.pop(k[,d]) -> v, remove specified key and return the corresponding value.
         If key is not found, d is returned if given, otherwise KeyError is raised.
         """
-        if self.readonly:
-            raise error('DB is readonly')
+        self._check_readonly()
 
         try:
             val = self[k]
@@ -320,10 +293,9 @@ class SqliteMap(object):
         """D.popitem() -> (k, v), remove and return some (key, value) pair as a
         2-tuple; but raise KeyError if D is empty
         """
-        if self.readonly:
-            raise error('DB is readonly')
+        self._check_readonly()
 
-        rows = [row for row in self.conn.execute(_GET_ONE_QUERY)]
+        rows = [row for row in self._conn.execute(self._GET_ONE_QUERY)]
         if len(rows) != 1:
             raise KeyError(
                 'Found %d rows when there should have been 1' % (len(rows),)
@@ -335,8 +307,7 @@ class SqliteMap(object):
 
     def setdefault(self, k, d=None):
         """D.setdefault(k[,d]) -> D.get(k,d), also set D[k]=d if k not in D"""
-        if self.readonly:
-            raise error('DB is readonly')
+        self._check_readonly()
 
         if k in self:
             return self[k]
@@ -371,7 +342,7 @@ class SqliteMap(object):
         def lookup(keys):
             """Reuse the slightly weird logic to lookup values"""
             # Do all the selects in a single transaction
-            key_to_val = dict(self.conn.execute(get_many_query(len(keys)), keys))
+            key_to_val = dict(self._conn.execute(self._get_many_query(len(keys)), keys))
 
             # Need to do this whole map lookup thing because the
             # select does not have a return order.
@@ -422,8 +393,7 @@ class SqliteMap(object):
         """D.update(E, **F) -> None.  Update D from E and F: for k in E: D[k] = E[k]
         (if E has keys else: for (k, v) in E: D[k] = v) then: for k in F: D[k] = F[k]
         """
-        if self.readonly:
-            raise error('DB is readonly')
+        self._check_readonly()
 
         def kv_gen():
             """Generator that combines all the args for easy iteration."""
@@ -440,41 +410,124 @@ class SqliteMap(object):
         rows = list(kv_gen())
 
         # Do all the inserts in a single transaction for the sake of efficiency
-        # TODO: Compare preformance of INSERT MANY to many INSERTS.  Will
+        # TODO: Compare performance of INSERT MANY to many INSERTS.  Will
         # have to do it in blocks to not exceed query-size limits
-        self.conn.executemany(_SET_QUERY, rows)
-        self.conn.commit()
+        self._conn.executemany(self._SET_QUERY, rows)
+        self._conn.commit()
 
     def __len__(self):
         """x.__len__() <==> len(x)"""
-        return self.conn.execute(_COUNT_QUERY).fetchone()[0]
+        return self._conn.execute(self._COUNT_QUERY).fetchone()[0]
 
     ## Iteration
     def iteritems(self):
         """D.iteritems() -> an iterator over the (key, value) items of D"""
-        for key, val in self.conn.execute(_GET_ALL_QUERY):
+        for key, val in self._conn.execute(self._GET_ALL_QUERY):
             yield key, val
 
     def items(self):
         """D.items() -> list of D's (key, value) pairs, as 2-tuples"""
-        return [(k, v) for k, v in self.iteritems()]
+        return list(self.iteritems())
+
     def iterkeys(self):
         """D.iterkeys() -> an iterator over the keys of D"""
         return (k for k, _ in self.iteritems())
+
     def keys(self):
         """D.iterkeys() -> an iterator over the keys of D"""
-        return [k for k in self.iterkeys()]
+        return list(self.iterkeys())
+
     def itervalues(self):
         """D.itervalues() -> an iterator over the values of D"""
         return (v for _, v in self.iteritems())
+
     def values(self):
         """D.values() -> list of D's values"""
-        return [v for v in self.itervalues()]
+        return list(self.itervalues())
+
     def __iter__(self):
         """Iterate over the keys of D.  Consistent with dict."""
         return self.iterkeys()
 
-def open(filename, flag='r', mode=0666):
+_ENUMERATE_TABLES_QUERY = 'SELECT name FROM sqlite_master WHERE type="table"'
+class SqliteMapContainer(object):
+    map_class = SqliteMap
+
+    def __init__(self, path, flag='r', mode=0666):
+        """Create an dict backed by a SQLite DB at `sqlite_db_path`.
+
+        See `open` for explanation of the parameters.
+        """
+        if flag not in ('c', 'n', 'w', 'r'):
+            raise error('Invalid flag "%s"' % (flag,))
+
+        self._readonly = bool(flag == 'r')
+        self._clear = bool(flag == 'n')
+
+        # Need an absolute path to db on the filesystem
+        # Default behavior is to create if the file does not already exist.
+        # We tweak from this default behavior to accommodate the other flag options
+        if path != ':memory:':
+            path = os.path.abspath(path)
+            # r and w require the db to exist ahead of time
+            if not os.path.exists(path):
+                if flag in ('r', 'w'):
+                    raise error('DB does not exist at %s' % (path,))
+                else:
+                    # Ghetto way of respecting mode, since unexposed by sqlite3.connect
+                    # Manually create the file before sqlite3 connects to it
+                    os.open(path, os.O_CREAT, mode)
+
+        self._conn = sqlite3.connect(path)
+        self._conn.text_factory = str
+
+        self._known_tables = dict()
+        table_rows = self._conn.execute(_ENUMERATE_TABLES_QUERY).fetchmany()
+        for current_row in table_rows:
+            table_name = current_row[0]
+            self._known_tables[table_name] = self.load_map(table_name, clear=self._clear)
+
+    def __getattr__(self, table_name):
+        if table_name.startswith('_') or table_name == 'trait_names':
+            raise AttributeError
+
+        output_table = self._known_tables.get(table_name)
+        if output_table is None:
+            self._check_readonly()
+
+            output_table = self.load_map(table_name)
+            self._known_tables[table_name] = output_table
+
+        return output_table
+
+    def _check_readonly(self):
+        if self._readonly:
+            raise error('DB is readonly')
+
+    def load_map(self, table_name, clear=False):
+        return self.map_class(self._conn, table_name, readonly=self._readonly, clear=clear)
+
+    def drop_map(self, table_name):
+        self._check_readonly()
+
+        drop_query = 'DROP TABLE %(table)s' % dict(table=table_name)
+        self._conn.execute(drop_query)
+
+        del self._known_tables[table_name]
+
+    def itermaps(self):
+        return self._known_tables.iteritems()
+
+    def maps(self):
+        return self._known_tables.items()
+
+    def itermapnames(self):
+        return self._known_tables.iterkeys()
+
+    def mapnames(self):
+        return self._known_tables.keys()
+
+def open_container(filename, flag='r', mode=0666):
     """Open a database and return a SqliteMap object.
 
     The `filename` argument is the path to the database file.
@@ -489,4 +542,8 @@ def open(filename, flag='r', mode=0666):
     the database has to be created.  It defaults to octal 0666 and respects the
     prevailing umask.
     """
-    return SqliteMap(filename, flag=flag, mode=mode)
+    return SqliteMapContainer(filename, flag=flag, mode=mode)
+
+def open(filename, flag='r', mode=0666):
+    sqlite_container = open_container(filename, flag=flag, mode=mode)
+    return sqlite_container.kv_table

@@ -1,3 +1,10 @@
+### v0.2.x-multi-map, 2011-11-09 -- Major version change
+* Added multi-map support to a single SQLite DB
+  * Added SQLiteMapContainer to wrap a SQLite DB with multiple SQLiteMaps
+  * Changed SQLiteMap to be backed by a table not an entire DB
+  * Provided new open_container method sqlite3dbm.dbm
+* Backward compatible with sqlite3dbm 0.1.x generated files
+
 ### v0.1.4-memory, 2011-09-16 -- Bugfix sqlite3 :memory: path
 * Allow for :memory: sqlite3 path for testing purposes
 
@@ -9,7 +16,7 @@
   * update() is faster. Should be preferred over many individual inserts
   * clear() is faster
 
-### v0.1.2, 2011-01-28 -- Bumb version number
+### v0.1.2, 2011-01-28 -- Bump version number
 * Do a full minor bump for pypi
 
 ### v0.1.1a, 2011-01-28 -- Fix MANIFEST

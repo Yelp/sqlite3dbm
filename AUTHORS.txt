@@ -5,3 +5,5 @@ Primary authors:
 * Jason Fennell <jfennell@yelp.com>
 
 Contributors (in order of contribution, latest first):
+
+* Matthew Tai <mtai84@gmail.com>
