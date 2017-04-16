@@ -97,6 +97,8 @@ Caught a module-specific error
 from __future__ import with_statement
 
 import os
+import time
+import functools
 import sqlite3
 
 __all__ = [
@@ -128,6 +130,7 @@ def _utf8(s):
 _GET_QUERY = 'SELECT kv_table.val FROM kv_table WHERE kv_table.key = ?'
 _GET_ALL_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table'
 _GET_ONE_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table LIMIT 1 OFFSET 0'
+_GET_LAST_QUERY = 'SELECT kv_table.key, kv_table.val FROM kv_table ORDER BY CAST(kv_table.key AS INT) desc LIMIT %d OFFSET 0'
 
 # The get-many query generation is slightly unfortunate in that sqlite does not
 # seem to have an interface for binding a list of values into a query.  Thus,
@@ -185,6 +188,28 @@ class SqliteMapException(Exception):
 # DBM interface
 error = SqliteMapException
 
+ATTEMPTS_COUNT = float("inf")
+
+def lockwait(f):
+    @functools.wraps(f)
+    def _lockwait(*args, **kwargs):
+        attempt = ATTEMPTS_COUNT
+        r = None
+        while attempt >= 0:
+            attempt -= 1
+            try:
+                r = f(*args, **kwargs)
+            except sqlite3.OperationalError, e:
+                if e.message != "database is locked" or \
+                   attempt == -1: # -1 is last attempt
+                    raise
+                else:
+                    time.sleep(0.01)
+            else:
+                break
+
+        return r
+    return _lockwait
 
 class SqliteMap(object):
     """Dictionary interface backed by a SQLite DB.
@@ -230,6 +255,7 @@ class SqliteMap(object):
         if flag == 'n':
             self.clear()
 
+    @lockwait
     def __setitem__(self, k, v):
         """x.__setitem__(k, v) <==> x[k] = v"""
         if self.readonly:
@@ -238,6 +264,7 @@ class SqliteMap(object):
         self.conn.execute(_SET_QUERY, (k, v))
         self.conn.commit()
 
+    @lockwait
     def __getitem__(self, k):
         """x.__getitem__(k) <==> x[k]
 
@@ -256,6 +283,7 @@ class SqliteMap(object):
             raise KeyError(k)
         return row[0]
 
+    @lockwait
     def __delitem__(self, k):
         """x.__delitem__(k) <==> del x[k]"""
         if self.readonly:
@@ -271,6 +299,7 @@ class SqliteMap(object):
         self.conn.execute(_DEL_QUERY, (k,))
         self.conn.commit()
 
+    @lockwait
     def __contains__(self, k):
         """D.__contains__(k) -> True if D has a key k, else False"""
         try:
@@ -280,6 +309,7 @@ class SqliteMap(object):
         else:
             return True
 
+    @lockwait
     def clear(self):
         """D.clear() -> None. Remove all items from D."""
         if self.readonly:
@@ -333,6 +363,22 @@ class SqliteMap(object):
         del self[key]
         return key, val
 
+    @lockwait
+    def getlast(self, count=1):
+        """D.getlast() -> (k, v), return last by key (key, value) pair as a
+        2-tuple; but raise KeyError if D is empty
+        """
+        if self.readonly:
+            raise error('DB is readonly')
+
+        rows = [row for row in self.conn.execute(_GET_LAST_QUERY % count)]
+        if len(rows) == 0:
+            raise KeyError(
+                'Found %d rows' % (len(rows),)
+            )
+
+        return rows
+
     def setdefault(self, k, d=None):
         """D.setdefault(k[,d]) -> D.get(k,d), also set D[k]=d if k not in D"""
         if self.readonly:
@@ -368,6 +414,7 @@ class SqliteMap(object):
                 else:
                     yield arg
 
+        @lockwait
         def lookup(keys):
             """Reuse the slightly weird logic to lookup values"""
             # Do all the selects in a single transaction
@@ -418,6 +465,7 @@ class SqliteMap(object):
             raise KeyError('One of the requested keys is missing!')
         return vals
 
+    @lockwait
     def update(self, *args, **kwargs):
         """D.update(E, **F) -> None.  Update D from E and F: for k in E: D[k] = E[k]
         (if E has keys else: for (k, v) in E: D[k] = v) then: for k in F: D[k] = F[k]
@@ -445,10 +493,12 @@ class SqliteMap(object):
         self.conn.executemany(_SET_QUERY, rows)
         self.conn.commit()
 
+    @lockwait
     def __len__(self):
         """x.__len__() <==> len(x)"""
         return self.conn.execute(_COUNT_QUERY).fetchone()[0]
 
+    @lockwait
     ## Iteration
     def iteritems(self):
         """D.iteritems() -> an iterator over the (key, value) items of D"""
